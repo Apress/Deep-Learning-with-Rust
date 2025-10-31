@@ -1,0 +1,120 @@
+use rand::prelude::*;
+use rand_distr::{Distribution, Normal};
+use tch::{nn, nn::Module, nn::OptimizerConfig, Device, Tensor};
+
+const BATCH_SIZE: i64 = 64;
+const Z_DIM: i64 = 100; // Latent space dimension
+const LEARNING_RATE: f64 = 0.0002;
+const EPOCHS: i64 = 1000;
+
+#[derive(Debug)]
+struct Generator {
+    fc1: nn::Linear,
+    fc2: nn::Linear,
+}
+
+impl Generator {
+    fn new(vs: &nn::Path) -> Generator {
+        Generator {
+            fc1: nn::linear(vs, Z_DIM, 128, Default::default()),
+            fc2: nn::linear(vs, 128, 1, Default::default()),
+        }
+    }
+}
+
+impl nn::Module for Generator {
+    fn forward(&self, xs: &Tensor) -> Tensor {
+        xs.view([-1, Z_DIM]) // Flatten the input to a 1D tensor
+            .apply(&self.fc1)
+            .max_pool2d_default(2)
+            .apply(&self.fc2)
+    }
+}
+
+#[derive(Debug)]
+struct Discriminator {
+    fc1: nn::Linear,
+    fc2: nn::Linear,
+}
+
+impl Discriminator {
+    fn new(vs: &nn::Path) -> Discriminator {
+        Discriminator {
+            fc1: nn::linear(vs, 1, 128, Default::default()),
+            fc2: nn::linear(vs, 128, 1, Default::default()),
+        }
+    }
+}
+
+impl nn::Module for Discriminator {
+    fn forward(&self, xs: &Tensor) -> Tensor {
+        xs.view([-1, 1]) // Flatten the input to a 1D tensor
+            .apply(&self.fc1)
+            .relu()
+            .apply(&self.fc2)
+            .sigmoid()
+    }
+}
+
+fn generate_latent_vectors(batch_size: i64) -> Tensor {
+    // Generate random numbers from a normal distribution (mean=0, std=1)
+    let normal = Normal::new(0.0, 1.0).unwrap(); // Unwrap the result to avoid errors
+    let latent_vectors: Vec<f64> = (0..batch_size)
+        .map(|_| normal.sample(&mut rand::thread_rng()).unwrap()) // Unwrap Result here
+        .collect();
+
+    Tensor::f_from_slice(&latent_vectors)
+        .expect("Error creating tensor from slice")
+        .view([batch_size, Z_DIM])
+        .to_device(Device::cuda_if_available())
+}
+
+fn main() {
+    // Setup the device and model
+    let device = Device::cuda_if_available();
+    let vs = nn::VarStore::new(device);
+
+    let generator = Generator::new(&vs.root());
+    let discriminator = Discriminator::new(&vs.root());
+
+    let mut optimizer_g = nn::Adam::default().build(&vs, LEARNING_RATE).unwrap();
+    let mut optimizer_d = nn::Adam::default().build(&vs, LEARNING_RATE).unwrap();
+
+    // Training Loop
+    for epoch in 1..=EPOCHS {
+        let real_data = Tensor::randn(&[BATCH_SIZE, 1], (tch::Kind::Float, device)); // Fake real data (e.g., normally distributed)
+
+        // Generate fake data
+        let z = generate_latent_vectors(BATCH_SIZE);
+        let fake_data = generator.forward(&z);
+
+        // Train Discriminator on real data
+        optimizer_d.zero_grad();
+        let real_output = discriminator.forward(&real_data);
+        let real_loss = real_output.mean(None); // Real data loss
+        real_loss.backward();
+
+        // Train Discriminator on fake data
+        let fake_output = discriminator.forward(&fake_data.detach());
+        let fake_loss = fake_output.mean(None); // Fake data loss
+        fake_loss.backward();
+        optimizer_d.step();
+
+        // Train Generator
+        optimizer_g.zero_grad();
+        let fake_output_g = discriminator.forward(&fake_data);
+        let g_loss = fake_output_g.mean(None); // Generator loss (based on fake data)
+        g_loss.backward();
+        optimizer_g.step();
+
+        // Print progress
+        if epoch % 100 == 0 {
+            println!(
+                "Epoch: {}, D Loss: {:.4}, G Loss: {:.4}",
+                epoch,
+                real_loss.double_value(&[]),
+                g_loss.double_value(&[])
+            );
+        }
+    }
+}

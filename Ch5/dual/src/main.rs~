@@ -1,0 +1,6 @@
+use autodiff::*;
+
+fn main() {
+    let y: FT<f64> = FT { x: 3.5, dx: 2.0 };
+    println!("y.x={}, y.dx={}!", y.x, y.dx);
+}

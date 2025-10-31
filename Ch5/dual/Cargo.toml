@@ -1,0 +1,7 @@
+[package]
+name = "dual"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+autodiff="0.7.0"

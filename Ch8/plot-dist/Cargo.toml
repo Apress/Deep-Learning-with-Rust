@@ -1,0 +1,9 @@
+[package]
+name = "plot-dist"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+plotters = "0.3"
+rand = "0.8"
+rand_distr = "0.4"
